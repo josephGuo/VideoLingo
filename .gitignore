@@ -155,9 +155,6 @@ cython_debug/
 /history/
 _model_cache/
 
-batch/input/
-batch/output/
-batch/tasks_setting.xlsx
 
 # large files
 /ffmpeg.exe
@@ -176,3 +173,4 @@ installer_files/
 # Streamlit runtime logs from OneKeyStart.bat
 logs/
 videolingo_*.log
+.tools/

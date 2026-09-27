@@ -5,9 +5,9 @@ ARG CUDA_VERSION
 # Set environment variables
 ENV DEBIAN_FRONTEND=noninteractive
 
-# System Python only bootstraps setup_env.py; the application uses its Python 3.13 venv.
+# System Python only bootstraps setup_env.py; the application uses its Python 3.12 venv.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    python3 curl ca-certificates git build-essential ffmpeg fonts-noto-cjk fontconfig libgl1 libglib2.0-0 \
+    python3 curl ca-certificates git build-essential fonts-noto-cjk fontconfig libgl1 libglib2.0-0 \
     && rm -rf /var/lib/apt/lists/*
 
 # Build the checked-out source, not a different revision cloned during the build.

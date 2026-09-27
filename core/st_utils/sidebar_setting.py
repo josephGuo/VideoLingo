@@ -1,3 +1,4 @@
+import importlib.util
 import streamlit as st
 import requests
 from translations.translations import translate as t
@@ -168,27 +169,105 @@ def page_setting():
                 update_key("whisper.language", langs[lang])
                 st.rerun()
 
-        runtimes = ["local", "elevenlabs"]
+        runtimes = ["local", "elevenlabs", "mai"]
         configured_runtime = load_key("whisper.runtime")
         if configured_runtime not in runtimes:
             st.warning(t("The 302.ai WhisperX cloud service has been retired. Select Local or ElevenLabs to continue."))
         runtime = st.selectbox(
-            t("WhisperX Runtime"),
+            t("ASR Runtime"),
             options=runtimes,
             index=runtimes.index(configured_runtime) if configured_runtime in runtimes else None,
             format_func=lambda x: {
                 "local": t("Local"),
                 "elevenlabs": t("ElevenLabs"),
+                "mai": t("MAI-Transcribe-2"),
             }[x],
             help=t(
-                "Local runtime requires >8GB GPU; ElevenLabs runtime requires an ElevenLabs API key."
+                "Local Qwen3-ASR runs best on an NVIDIA GPU or Apple Silicon (CPU works but is slow); cloud recognition requires a provider API key."
             ),
         )
         if runtime is not None and runtime != configured_runtime:
             update_key("whisper.runtime", runtime)
             st.rerun()
+        if runtime == "local":
+            backends = ["qwen", "whisperx"]
+            configured_backend = load_key_or("whisper.backend", "qwen")
+            backend = st.selectbox(
+                t("Local ASR Backend"),
+                options=backends,
+                index=backends.index(configured_backend) if configured_backend in backends else 0,
+                format_func=lambda x: {
+                    "qwen": t("Qwen3-ASR + ForcedAligner (default)"),
+                    "whisperx": t("WhisperX (manual install)"),
+                }[x],
+            )
+            if backend != configured_backend:
+                update_key("whisper.backend", backend, add_missing=True)
+                st.rerun()
+            if backend == "qwen":
+                sizes = ["1.7b", "0.6b"]
+                configured_size = load_key_or("whisper.qwen_model", "1.7b")
+                size = st.selectbox(
+                    t("Qwen3-ASR Model Size"),
+                    options=sizes,
+                    index=sizes.index(configured_size) if configured_size in sizes else 0,
+                    format_func=lambda x: {
+                        "1.7b": t("1.7B (more accurate)"),
+                        "0.6b": t("0.6B (faster, less memory)"),
+                    }[x],
+                )
+                if size != configured_size:
+                    update_key("whisper.qwen_model", size, add_missing=True)
+                    st.rerun()
+            elif importlib.util.find_spec("whisperx") is None:
+                st.warning(t("WhisperX is not installed. Follow the manual page (docs/pages/docs/whisperx-manual.en-US.md) and install the extra packages yourself, or set whisper.backend to qwen."))
         if runtime == "elevenlabs":
             config_input(t("ElevenLabs API"), "whisper.elevenlabs_api_key")
+        elif runtime == "mai":
+            from core.asr_backend.mai_asr import detect_region
+
+            configured_provider = str(load_key_or("whisper.mai_provider", "azure") or "azure").lower()
+            providers = ["azure", "openrouter"]
+            provider = st.selectbox(
+                t("MAI provider"), options=providers,
+                index=providers.index(configured_provider) if configured_provider in providers else 0,
+                format_func=lambda value: "Azure Speech" if value == "azure" else "OpenRouter",
+            )
+            if provider != configured_provider:
+                update_key("whisper.mai_provider", provider, add_missing=True)
+                st.rerun()
+            if provider == "openrouter":
+                stored_key = str(load_key_or("whisper.mai_openrouter_api_key", "") or "")
+                router_key = st.text_input(
+                    t("OpenRouter API key"), value=stored_key, type="password",
+                )
+                if router_key != stored_key:
+                    update_key("whisper.mai_openrouter_api_key", router_key, add_missing=True)
+                st.caption(t("Audio is sent to OpenRouter for MAI-Transcribe-2 and may incur charges."))
+            else:
+                stored_key = str(load_key_or("whisper.mai_api_key", "") or "")
+                speech_key = st.text_input(
+                    t("Azure Speech key"), value=stored_key, type="password",
+                    help=t("Use a key from an Azure Speech resource in a region where MAI-Transcribe-2 is available."),
+                )
+                if speech_key != stored_key:
+                    update_key("whisper.mai_api_key", speech_key, add_missing=True)
+                stored_region = str(load_key_or("whisper.mai_region", "") or "")
+                region = st.text_input(
+                    t("Azure Speech region or resource endpoint"), value=stored_region,
+                    help=t("Enter a region such as eastus, or the HTTPS endpoint of your Azure Speech resource. Leave blank to detect the region from the key."),
+                )
+                if region != stored_region:
+                    update_key("whisper.mai_region", region.strip(), add_missing=True)
+                if st.button(t("Detect Azure Speech region"), disabled=not speech_key.strip()):
+                    with st.spinner(t("Detecting Azure Speech region...")):
+                        detected = detect_region(speech_key.strip())
+                    if detected:
+                        update_key("whisper.mai_region", detected, add_missing=True)
+                        st.rerun()
+                    else:
+                        st.warning(t("Region detection failed. Check the key or enter the resource region manually."))
+                st.caption(t("MAI-Transcribe-2 is in public preview. Audio is sent to Azure Speech."))
 
         with c2:
             target_language = st.text_input(
@@ -202,10 +281,14 @@ def page_setting():
                 update_key("target_language", target_language)
                 st.rerun()
 
+        demucs_available = importlib.util.find_spec("demucs") is not None
+        if not demucs_available and load_key("demucs"):
+            update_key("demucs", False)
         demucs = st.toggle(
             t("Vocal separation enhance"),
             value=load_key("demucs"),
-            help=t(
+            disabled=not demucs_available,
+            help=t("Vocal separation is unavailable in this installation") if not demucs_available else t(
                 "Recommended for videos with loud background noise, but will increase processing time"
             ),
         )
