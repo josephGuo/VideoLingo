@@ -1,7 +1,7 @@
 # * Settings marked with * are advanced settings that won't appear in the Streamlit page and can only be modified manually in config.py
 # recommend to set in streamlit page
 # -------------------
-# version: "3.1.0"
+# version: "3.1.1"
 # author: "Huanshere"
 # -------------------
 
@@ -34,7 +34,7 @@ whisper:
   # whisperx is not installed by the installer. Install its packages yourself from
   # docs/pages/docs/whisperx-manual.en-US.md, then set backend to whisperx.
   backend: 'qwen'
-  # Qwen3-ASR size: "1.7b" (more accurate) or "0.6b" (faster, less memory)
+  # *Qwen3-ASR size: "1.7b" (more accurate) or "0.6b" (faster, less memory)
   qwen_model: '1.7b'
   # *Qwen engine: "auto" (MLX on Apple Silicon, qwen-asr/transformers elsewhere), "mlx" or "transformers"
   qwen_engine: 'auto'
@@ -71,6 +71,25 @@ subtitle:
   max_length: 75
   # *Translated subtitles are slightly larger than source subtitles, affecting the reference length for subtitle splitting
   target_multiplier: 1.2
+  # *Subtitles burned into the subtitle video and into the dubbed video [bilingual, translation, source]
+  sub_video_subtitles: 'bilingual'
+  dub_video_subtitles: 'translation'
+  # *Style of the burned-in subtitles. Colors are &HBBGGRR, &HAABBGGRR (AA is the transparency) or #RRGGBB. An empty font_name uses the default font of the system
+  style:
+    source:
+      font_name: ''
+      font_size: 15
+      font_color: '&HFFFFFF'
+      outline_color: '&H000000'
+      outline_width: 1
+    translation:
+      font_name: ''
+      font_size: 17
+      font_color: '&H00FFFF'
+      outline_color: '&H000000'
+      outline_width: 1
+      back_color: '&H33000000'
+      margin_v: 27
 
 # *Summary length, set low to 2k if using local LLM
 summary_length: 8000
@@ -81,12 +100,18 @@ max_split_length: 20
 # *Whether to reflect the translation result in the original text
 reflect_translate: true
 
+# *Style of the translation in your own words, e.g. 'colloquial, short sentences'. Empty = no extra requirement
+translation_style: ''
+
 # *Whether to pause after extracting professional terms and before translation, allowing users to manually adjust the terminology table output\log\terminology.json
 pause_before_translate: false
 
+# *Whether to pause after the translation and before the subtitles are generated, allowing users to manually adjust the Translation column of output\log\translation_results.xlsx
+pause_after_translate: false
+
 ## ======================== Dubbing Settings ======================== ##
-# TTS selection [sf_fish_tts, openai_tts, gpt_sovits, azure_tts, fish_tts, edge_tts, custom_tts]
-tts_method: 'azure_tts'
+# TTS selection [edge_tts, openai_tts, fish_audio, f5tts, sf_fish_tts, sf_cosyvoice2, gpt_sovits, custom_tts]
+tts_method: 'edge_tts'
 
 # SiliconFlow FishTTS
 sf_fish_tts:
@@ -100,23 +125,27 @@ sf_fish_tts:
   # preset, custom, dynamic
   mode: "preset"
 
-# OpenAI TTS-1 API configuration, 302.ai API only
+# OpenAI TTS: the speech endpoint of OpenLux, or of another service with the API of OpenAI
 openai_tts:
   api_key: 'YOUR_302_API_KEY'
   voice: 'alloy'
+  # *Base URL and model of the speech endpoint
+  base_url: 'https://api.openlux.ai/v1'
+  model: 'gpt-4o-mini-tts'
 
-# Azure configuration, 302.ai API only
-azure_tts:
-  api_key: 'YOUR_302_API_KEY'
-  voice: 'zh-CN-YunfengNeural'
-
-# FishTTS configuration, 302.ai API only
-fish_tts:
-  api_key: 'YOUR_302_API_KEY'
-  character: 'AD学姐'
-  character_id_dict:
-    'AD学姐': '7f92f8afb8ec43bf81429cc1c9199cb1'
-    '丁真': '54a5170264694bfc8e9ad98df7bd89c3'
+# Fish Audio, the official API (https://fish.audio)
+fish_audio:
+  api_key: 'YOUR_FISH_AUDIO_KEY'
+  # clone: the voice of the video is cloned; preset: the fixed voice of voice_id
+  mode: 'clone'
+  # The voice of the mode "preset": the ID of a voice of fish.audio, the last part of the address of its page
+  voice_id: '74c6aba5cbf94a15bbdc547ffce5cb38'
+  # The voices that the page offers by name. Add the voices of fish.audio that you like: name and ID
+  voices:
+    '语彤 Yutong (中文, female)': '74c6aba5cbf94a15bbdc547ffce5cb38'
+    '浩然 Haoran (中文, male)': 'd675c275d1d44e57b4ef3840c5a23209'
+  # *s2.1-pro, s2-pro or s1
+  model: 's2.1-pro'
 
 # SiliconFlow CosyVoice2 Clone
 sf_cosyvoice2:
@@ -131,6 +160,7 @@ gpt_sovits:
   character: 'Huanyuv2'
   refer_mode: 3
 
+# F5-TTS, 302.ai API only: the voice of the video is cloned
 f5tts:
   302_api: 'YOUR_302_API_KEY'
 
