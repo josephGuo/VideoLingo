@@ -159,7 +159,7 @@ uv run start.py
 本地识别默认使用 **Qwen3-ASR** 转写，再用 **Qwen3-ForcedAligner-0.6B** 生成词级时间轴。开启人声分离时，转写用原始音频，对齐用分离出的人声。
 
 - **模型大小**：`config.yaml` 的 `whisper.qwen_model`（侧栏不提供）。`1.7b`（默认）更准确；`0.6b` 更快、更省显存。对齐模型固定为 ForcedAligner-0.6B。
-- **推理引擎**：`whisper.qwen_engine: auto` 时自动选择，一般不需要改。
+- **推理引擎**：`whisper.qwen_engine: auto` 时自动选择，一般不需要改。`audiocpp` 是可选引擎，需要先运行 audio.cpp 服务端，见[下文](#audiocpp-engine)。
 
 | 平台 | 引擎 | 模型 | 说明 |
 |:-----|:-----|:-----|:-----|
@@ -177,11 +177,52 @@ uv run start.py
 - WhisperX 不是安装器选项。若要使用（包括中文 Belle 模型），请自行安装依赖，见 [WhisperX（手动安装）](whisperx-manual.zh-CN.md)。
 - 也可以使用官方 Docker 镜像 `qwenllm/qwen3-asr` 单独部署 Qwen3-ASR 服务，但 VideoLingo 目前不直接调用它。
 
+<a id="audiocpp-engine"></a>
+#### 可选的 audio.cpp 引擎
+
+[audio.cpp](https://github.com/0xShug0/audio.cpp) 用原生服务端以 GGUF 格式运行同样的 Qwen3-ASR 和 Qwen3-ForcedAligner 模型，不需要 PyTorch。设置 `whisper.qwen_engine: audiocpp` 后，VideoLingo 把每个窗口发给这个服务端，Qwen 路径的其余部分保持不变：分窗、语言探测、退化输出检查、在人声轨上对齐以及标点还原。`auto` 永远不会选中它，安装器也不会安装 audio.cpp 或它的模型。
+
+1. 从 [audio.cpp 发布页](https://github.com/0xShug0/audio.cpp/releases) 下载对应平台的版本（NVIDIA 显卡选 CUDA 版并下载配套的 `cudart` 包），再从 [audio-cpp/audio.cpp-gguf](https://huggingface.co/audio-cpp/audio.cpp-gguf) 下载 GGUF 文件 `Qwen3-ASR-1.7B-GGUF/qwen3-asr-1.7b-q8_0.gguf`（或 0.6B）和 `Qwen3-ForcedAligner-0.6B-GGUF/qwen3-forced-aligner-0.6b-q8_0.gguf`。
+2. 用下面的模型 id 启动 `audiocpp_server --config server.json`，VideoLingo 请求时就用这些 id：
+
+```json
+{
+  "host": "127.0.0.1", "port": 8080, "backend": "cuda", "lazy_load": true, "max_loaded_models": 0,
+  "models": [
+    {"id": "Qwen3-ASR-1.7B", "family": "qwen3_asr", "path": "/path/to/qwen3-asr-1.7b-q8_0.gguf", "task": "asr", "mode": "offline"},
+    {"id": "Qwen3-ForcedAligner-0.6B", "family": "qwen3_forced_aligner", "path": "/path/to/qwen3-forced-aligner-0.6b-q8_0.gguf", "task": "align", "mode": "offline"}
+  ]
+}
+```
+
+3. 在 `config.yaml` 中设置 `whisper.qwen_engine: audiocpp`；服务端不在 `http://127.0.0.1:8080` 时再设置 `whisper.audiocpp_url`。`whisper.qwen_model` 决定使用 `Qwen3-ASR-1.7B` 还是 `Qwen3-ASR-0.6B`。
+
+使用这个引擎时每个窗口最长 90 秒，因为 audio.cpp 的强制对齐模型会拒绝约 115 秒及以上的片段。音频以 16 kHz WAV 通过 HTTP 发给服务端。识别缓存会把 audio.cpp 的结果和其他引擎分开，但不记录服务端用的是哪个 GGUF 文件或哪个 audio.cpp 版本：更换后请删除 `.cache/asr` 再重新识别。
+
 #### 可选的 MAI-Transcribe-2（Azure Speech 或 OpenRouter）
 
 在侧栏选择 **ASR Runtime → MAI-Transcribe-2**，再选择 **Azure Speech** 或 **OpenRouter**。Azure 使用 `whisper.mai_api_key` 和 `whisper.mai_region`（例如 `eastus`、资源终结点，或留空自动检测）；OpenRouter 使用单独的密钥输入框 `whisper.mai_openrouter_api_key`，不需要 Azure 区域。旧配置未设置 `whisper.mai_provider` 时仍使用 Azure。默认识别方式仍是本地 Qwen3-ASR。
 
 Azure MAI 使用快速转写 API；OpenRouter 使用[专用音频转写 API](https://openrouter.ai/docs/guides/overview/multimodal/stt) 和 `microsoft/mai-transcribe-2` 模型。两种方式都请求清理后的文本及词级时间戳。OpenRouter 会将音频拆为约两分钟的片段，以适应处理超时限制。音频会发送到选定的云服务商，可能产生费用。Azure MAI-Transcribe-2 目前为无 SLA 的公开预览；请确认资源区域支持该模型。缓存会区分服务商及 API 版本，但不包含密钥或 Azure 区域。[#618 的贡献者评测](https://github.com/Huanshere/VideoLingo/pull/618)比较的是 MAI 与 WhisperX，尚未比较当前默认的 Qwen3-ASR。
+
+<a id="storage"></a>
+### 文件存放位置
+
+| 内容 | 位置 | 能否与其他工具共用 |
+|:-----|:-----|:-------------------|
+| Python 环境 | 项目文件夹里的 `.venv`；用 `setup_env.py --shared` 时为 `~/.venvs/videolingo`（`start.py` 和 `OneKeyStart.bat` 优先使用它） | 不能。如需使用 WhisperX，必须装进这个环境 |
+| 识别模型（Qwen、WhisperX、对齐模型） | Hugging Face 缓存：`~/.cache/huggingface/hub`；设置了 `HF_HOME` 时为 `$HF_HOME/hub` | 能。所有 Hugging Face 工具读同一个缓存 |
+| 手动放置的模型 | `config.yaml` 的 `model_dir`（默认 `_model_cache`），优先于缓存。Qwen 使用 `_model_cache/<仓库名末段>`（例如 `_model_cache/Qwen3-ASR-1.7B`）。WhisperX 使用 `_model_cache/<模型名>`（例如 `_model_cache/large-v3`；识别语言为 `zh` 时为 `_model_cache/Belle-whisper-large-v3-zh-punct-fasterwhisper`） | 只能复制 |
+| FFmpeg 和 ffprobe | 安装器下载到环境内，或使用 `VIDEOLINGO_FFMPEG_DIR` 指定的文件夹 | 能，通过 `VIDEOLINGO_FFMPEG_DIR` |
+
+安装器不会设置环境变量。
+
+要复用电脑上已有的文件，在启动 VideoLingo 前把下面的变量设为用户环境变量：
+
+- `HF_HOME`：另一个已下载模型的工具的缓存文件夹（例如独立安装的 WhisperX），避免重复下载。
+- `VIDEOLINGO_FFMPEG_DIR`：同时包含 `ffmpeg` 和 `ffprobe` 的文件夹。程序会检查这个版本是否具备 VideoLingo 需要的滤镜和编码器。
+
+`uv run start.py --check` 会列出缓存中的模型、本地模型文件夹和当前使用的 FFmpeg。
 
 <a id="gpu-runtime"></a>
 ### GPU 运行库

@@ -160,7 +160,7 @@ To start it later, run `uv run start.py` again from the VideoLingo folder. Apple
 Local recognition transcribes with **Qwen3-ASR** and then produces word timestamps with **Qwen3-ForcedAligner-0.6B**. With vocal separation enabled, transcription uses the original audio and alignment uses the separated vocals.
 
 - **Model size**: `whisper.qwen_model` in `config.yaml` (not in the sidebar). `1.7b` (default) is more accurate; `0.6b` is faster and uses less memory. The aligner is always ForcedAligner-0.6B.
-- **Engine**: `whisper.qwen_engine: auto` selects it automatically; you normally do not need to change it.
+- **Engine**: `whisper.qwen_engine: auto` selects it automatically; you normally do not need to change it. `audiocpp` is an optional engine that uses a running audio.cpp server, see [below](#audiocpp-engine).
 
 | Platform | Engine | Models | Notes |
 |:---------|:-------|:-------|:------|
@@ -178,11 +178,52 @@ Local recognition transcribes with **Qwen3-ASR** and then produces word timestam
 - WhisperX is not an installer option. To use it (including the Belle model for Chinese), install the packages yourself: [WhisperX (manual install)](whisperx-manual.en-US.md).
 - The official `qwenllm/qwen3-asr` Docker image can host a standalone Qwen3-ASR service, but VideoLingo does not call it directly.
 
+<a id="audiocpp-engine"></a>
+#### Optional audio.cpp engine
+
+[audio.cpp](https://github.com/0xShug0/audio.cpp) runs the same Qwen3-ASR and Qwen3-ForcedAligner models as GGUF files in a native server, without PyTorch. With `whisper.qwen_engine: audiocpp`, VideoLingo sends each window to that server and keeps everything else of the Qwen path: windows, language probes, degenerate-output checks, alignment on the vocal track and punctuation mapping. It is never selected by `auto`, and the installer does not install audio.cpp or its models.
+
+1. Download a build for your platform from the [audio.cpp releases](https://github.com/0xShug0/audio.cpp/releases) (for an NVIDIA GPU, a CUDA build plus its matching `cudart` package), and the GGUF files `Qwen3-ASR-1.7B-GGUF/qwen3-asr-1.7b-q8_0.gguf` (or 0.6B) and `Qwen3-ForcedAligner-0.6B-GGUF/qwen3-forced-aligner-0.6b-q8_0.gguf` from [audio-cpp/audio.cpp-gguf](https://huggingface.co/audio-cpp/audio.cpp-gguf).
+2. Start `audiocpp_server --config server.json` with these model ids, which VideoLingo uses as the request `model`:
+
+```json
+{
+  "host": "127.0.0.1", "port": 8080, "backend": "cuda", "lazy_load": true, "max_loaded_models": 0,
+  "models": [
+    {"id": "Qwen3-ASR-1.7B", "family": "qwen3_asr", "path": "/path/to/qwen3-asr-1.7b-q8_0.gguf", "task": "asr", "mode": "offline"},
+    {"id": "Qwen3-ForcedAligner-0.6B", "family": "qwen3_forced_aligner", "path": "/path/to/qwen3-forced-aligner-0.6b-q8_0.gguf", "task": "align", "mode": "offline"}
+  ]
+}
+```
+
+3. In `config.yaml`, set `whisper.qwen_engine: audiocpp`, and `whisper.audiocpp_url` if the server is not at `http://127.0.0.1:8080`. `whisper.qwen_model` picks the `Qwen3-ASR-1.7B` or `Qwen3-ASR-0.6B` id.
+
+Windows are at most 90 s with this engine, because the audio.cpp forced aligner rejects clips of about 115 s or more. Audio is sent to the server as 16 kHz WAV over HTTP. The transcription cache keeps audio.cpp results apart from the other engines, but does not track which GGUF files or audio.cpp version the server uses: after changing them, delete `.cache/asr` to transcribe again.
+
 #### Optional MAI-Transcribe-2 (Azure Speech or OpenRouter)
 
 Choose **ASR Runtime → MAI-Transcribe-2** in the sidebar, then select **Azure Speech** or **OpenRouter** as the MAI provider. Azure uses `whisper.mai_api_key` and `whisper.mai_region` (a region such as `eastus`, a resource endpoint, or blank for detection). OpenRouter uses its own key field, `whisper.mai_openrouter_api_key`; no Azure region is needed. Existing configurations without `whisper.mai_provider` continue to use Azure. The default ASR runtime remains local Qwen3-ASR.
 
 Azure MAI uses the fast transcription API; OpenRouter uses its [dedicated audio transcription API](https://openrouter.ai/docs/guides/overview/multimodal/stt) with model `microsoft/mai-transcribe-2`. Both request clean text and word timestamps. OpenRouter uploads are split into roughly two-minute clips to fit its processing timeout. Audio is sent to the selected cloud provider and may incur charges. Azure MAI-Transcribe-2 is in public preview without an SLA; check that your resource region supports it. Provider and API version distinguish cached transcripts; credentials and resource region are excluded from cache identity. The [contributor's evaluation in #618](https://github.com/Huanshere/VideoLingo/pull/618) compared MAI with WhisperX, not the current Qwen3-ASR default.
+
+<a id="storage"></a>
+### Where files are stored
+
+| What | Location | Shared with other tools |
+|:-----|:---------|:------------------------|
+| Python environment | `.venv` in the project folder, or `~/.venvs/videolingo` with `setup_env.py --shared` (found first by `start.py` and `OneKeyStart.bat`) | No. WhisperX, if used, must be installed into this environment |
+| Recognition models (Qwen, WhisperX, aligners) | Hugging Face cache: `~/.cache/huggingface/hub`, or `$HF_HOME/hub` when `HF_HOME` is set | Yes. Every Hugging Face tool reads the same cache |
+| Pre-placed models | `model_dir` in `config.yaml` (default `_model_cache`), checked before the cache. Qwen uses `_model_cache/<last part of the repo id>` (for example `_model_cache/Qwen3-ASR-1.7B`). WhisperX uses `_model_cache/<model name>` (for example `_model_cache/large-v3`; with recognition language `zh`, `_model_cache/Belle-whisper-large-v3-zh-punct-fasterwhisper`) | Only by copying |
+| FFmpeg and ffprobe | Downloaded into the environment by the installer, or the folder in `VIDEOLINGO_FFMPEG_DIR` | Yes, with `VIDEOLINGO_FFMPEG_DIR` |
+
+The installer does not set environment variables.
+
+To reuse what is already on your computer, set these as user environment variables before starting VideoLingo:
+
+- `HF_HOME`: the cache folder of another tool that already downloaded the models (for example a standalone WhisperX), so they are not downloaded again.
+- `VIDEOLINGO_FFMPEG_DIR`: a folder that contains both `ffmpeg` and `ffprobe`. The build is checked for the filters and encoders VideoLingo needs.
+
+`uv run start.py --check` lists the models found in the cache, the local model folder and the FFmpeg in use.
 
 <a id="gpu-runtime"></a>
 ### GPU runtime
